@@ -39,6 +39,10 @@ export class IfcManager {
         this.setupThreeMeshBVH();
     }
 
+    createModelForExport() {
+        this.ifcLoader.ifcManager.createModelForExport();
+    }
+
     setupFileOpener() {
         const input = document.querySelector('input[type="file"]');
         if (!input) return;

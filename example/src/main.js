@@ -6,3 +6,10 @@ const ifcModels = [];
 const baseScene = new ThreeScene();
 const picker = new Picker(baseScene, ifcModels);
 const loader = new IfcManager(baseScene.scene, ifcModels);
+
+let b = document.getElementById("exportButton");
+console.log(b);
+
+b.onclick = () => {
+    loader.createModelForExport();
+}

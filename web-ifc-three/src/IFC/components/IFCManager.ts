@@ -5,16 +5,17 @@ import { PropertyManager } from './properties/PropertyManager';
 import { IfcElements } from './IFCElementsMap';
 import { TypeManager } from './TypeManager';
 import { SubsetConfig, IfcState, JSONObject } from '../BaseDefinitions';
-import {BufferGeometry, Material, Matrix4, Scene} from 'three';
+import {BufferGeometry, Material, Matrix4, RingGeometry, MeshBasicMaterial, Mesh, Scene} from 'three';
 import { IFCModel } from './IFCModel';
 import { BvhManager } from './BvhManager';
-import { LoaderSettings } from 'web-ifc';
+import { IfcWall, IFCWALL, LoaderSettings } from 'web-ifc';
 import { IFCWorkerHandler } from '../web-workers/IFCWorkerHandler';
 import { PropertyManagerAPI } from './properties/BaseDefinitions';
 import { MemoryCleaner } from './MemoryCleaner';
 import { IFCUtils } from './IFCUtils';
 import { Data } from './sequence/Data'
 import { IfcTypesMap } from './IfcTypesMap';
+import { ExportHelper, pt } from './ExportHelper';
 
 /**
  * Contains all the logic to work with the loaded IFC files (select, edit, etc).
@@ -53,6 +54,93 @@ export class IFCManager {
         // this.state.useJSON ? await this.disposeMemory() : await this.types.getAllTypes(this.worker);
         await this.types.getAllTypes(this.worker);
         return model;
+    }
+
+    async exportMeshAsIFCProduct(exporter: ExportHelper, mesh: Mesh)
+    {
+        let geom = mesh.geometry;
+
+        //@ts-ignore
+        let index = geom.getIndex().array;
+        //@ts-ignore
+        let position = geom.attributes.position.array;
+
+        let posStride = geom.attributes.position.itemSize;
+
+        let faces = [];
+        for (let i = 0; i < index.length; i += 3)
+        {
+            let ia = index[i + 0];
+            let ib = index[i + 1];
+            let ic = index[i + 2];
+
+            let pta: pt = {x: position[ia * posStride + 0], y: position[ia * posStride + 1], z: position[ia * posStride + 2]}
+            let ptb: pt = {x: position[ib * posStride + 0], y: position[ib * posStride + 1], z: position[ib * posStride + 2]}
+            let ptc: pt = {x: position[ic * posStride + 0], y: position[ic * posStride + 1], z: position[ic * posStride + 2]}
+
+            faces.push(await exporter.Face([pta, ptb, ptc]));
+        }
+
+        let brep = await exporter.FacetedBREP(faces);
+        let brepShape = await exporter.ShapeBREP([brep]);
+        let productDef = await exporter.ProductDefinitionShape([brepShape]);
+        let placement = await exporter.Placement({x: 0, y: 0, z: 0});
+        let wall = await exporter.Product(IfcWall, IFCWALL, productDef, placement);
+
+        // apply material if exists
+        if (mesh.material)
+        {
+            //@ts-ignore
+            let col = mesh.material.color as THREE.Color;
+            //@ts-ignore
+            let opacity = mesh.material.opacity as number;
+
+            if (col)
+            {
+                let style = await exporter.PresentationStyleAssignment("material", col.r, col.g, col.b, 1 - opacity);
+                await exporter.StyledItem(wall, style);
+            }
+        }
+    }
+
+    async createModelForExport()
+    {
+        if (this.state.api.wasmModule === undefined) await this.state.api.Init();
+        console.log("Exporting model...");
+
+        let model = await this.state.api.CreateModel();
+
+        var cube = new RingGeometry(1, 2, 10, 10);
+        var material = new MeshBasicMaterial({
+            color: "red",
+            opacity: 1,
+            wireframe: true,
+            transparent: false
+        });
+        var mesh = new Mesh(cube, material);
+
+        let exporter = new ExportHelper(model, this.state.api);
+
+        console.log("proj");
+        await exporter.Project("web-ifc-three", "this project was exported from web-ifc-three");
+        console.log("proj");
+
+        await this.exportMeshAsIFCProduct(exporter, mesh);
+        
+        let ifcData = await this.state.api.ExportFileAsIFC(model);
+        let ifcDataString = new TextDecoder().decode(ifcData);
+        console.log(ifcDataString);
+
+        var element = document.createElement('a');
+        element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(ifcDataString));
+        element.setAttribute('download', "export.ifc");
+
+        element.style.display = 'none';
+        document.body.appendChild(element);
+
+        element.click();
+
+        document.body.removeChild(element);
     }
 
     /**
